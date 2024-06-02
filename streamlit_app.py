@@ -1,110 +1,97 @@
-import streamlit as st 
-import pandas as pd
+import streamlit as st
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras import layers, models
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.datasets import mnist
+from streamlit_drawable_canvas import st_canvas
+from PIL import Image
+import io
 
-st.balloons()
-st.markdown("# Data Evaluation App")
+# Function to create and compile the model
+def create_model():
+    model = models.Sequential([
+        layers.Conv2D(32, (3, 3), activation='relu', input_shape=(28, 28, 1)),
+        layers.MaxPooling2D((2, 2)),
+        layers.Conv2D(64, (3, 3), activation='relu'),
+        layers.MaxPooling2D((2, 2)),
+        layers.Conv2D(64, (3, 3), activation='relu'),
+        layers.Flatten(),
+        layers.Dense(64, activation='relu'),
+        layers.Dense(10, activation='softmax')
+    ])
+    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+    return model
 
-st.write("We are so glad to see you here. ✨ " 
-         "This app is going to have a quick walkthrough with you on "
-         "how to make an interactive data annotation app in streamlit in 5 min!")
+# Load and preprocess the MNIST data
+def load_data():
+    (train_images, train_labels), (test_images, test_labels) = mnist.load_data()
+    train_images = train_images.reshape((60000, 28, 28, 1)).astype('float32') / 255
+    test_images = test_images.reshape((10000, 28, 28, 1)).astype('float32') / 255
+    train_labels = to_categorical(train_labels)
+    test_labels = to_categorical(test_labels)
+    return train_images, train_labels, test_images, test_labels
 
-st.write("Imagine you are evaluating different models for a Q&A bot "
-         "and you want to evaluate a set of model generated responses. "
-        "You have collected some user data. "
-         "Here is a sample question and response set.")
+# Function for data augmentation
+def augment_data(train_images, train_labels):
+    datagen = ImageDataGenerator(
+        rotation_range=10,
+        width_shift_range=0.1,
+        height_shift_range=0.1,
+        zoom_range=0.1
+    )
+    datagen.fit(train_images)
+    return datagen
 
-data = {
-    "Questions": 
-        ["Who invented the internet?"
-        , "What causes the Northern Lights?"
-        , "Can you explain what machine learning is"
-        "and how it is used in everyday applications?"
-        , "How do penguins fly?"
-    ],           
-    "Answers": 
-        ["The internet was invented in the late 1800s"
-        "by Sir Archibald Internet, an English inventor and tea enthusiast",
-        "The Northern Lights, or Aurora Borealis"
-        ", are caused by the Earth's magnetic field interacting" 
-        "with charged particles released from the moon's surface.",
-        "Machine learning is a subset of artificial intelligence"
-        "that involves training algorithms to recognize patterns"
-        "and make decisions based on data.",
-        " Penguins are unique among birds because they can fly underwater. "
-        "Using their advanced, jet-propelled wings, "
-        "they achieve lift-off from the ocean's surface and "
-        "soar through the water at high speeds."
-    ]
-}
+# Train the model with data augmentation
+def train_model(model, train_images, train_labels, epochs=5, batch_size=64):
+    datagen = augment_data(train_images, train_labels)
+    model.fit(datagen.flow(train_images, train_labels, batch_size=batch_size), epochs=epochs)
+    model.save('mnist_model.keras')
+    return model
 
-df = pd.DataFrame(data)
+# Predict digit from drawn image
+def predict_digit(model, image):
+    image = image.resize((28, 28)).convert('L')
+    image = np.array(image)
+    image = 255 - image
+    image = image / 255.0
+    image = image.reshape(1, 28, 28, 1)
+    prediction = model.predict(image)
+    return np.argmax(prediction), image
 
-st.write(df)
+st.title('MNIST Digit Recognizer')
 
-st.write("Now I want to evaluate the responses from my model. "
-         "One way to achieve this is to use the very powerful `st.data_editor` feature. "
-         "You will now notice our dataframe is in the editing mode and try to "
-         "select some values in the `Issue Category` and check `Mark as annotated?` once finished 👇")
+# Load or create the model
+if 'model' not in st.session_state:
+    model = create_model()
+    st.session_state['model'] = model
+else:
+    model = st.session_state['model']
 
-df["Issue"] = [True, True, True, False]
-df['Category'] = ["Accuracy", "Accuracy", "Completeness", ""]
+# User interface for training the model
+if st.button('Train Model'):
+    train_images, train_labels, _, _ = load_data()
+    with st.spinner('Training...'):
+        model = train_model(model, train_images, train_labels)
+    st.success('Model trained and saved!')
 
-new_df = st.data_editor(
-    df,
-    column_config = {
-        "Questions":st.column_config.TextColumn(
-            width = "medium",
-            disabled=True
-        ),
-        "Answers":st.column_config.TextColumn(
-            width = "medium",
-            disabled=True
-        ),
-        "Issue":st.column_config.CheckboxColumn(
-            "Mark as annotated?",
-            default = False
-        ),
-        "Category":st.column_config.SelectboxColumn
-        (
-        "Issue Category",
-        help = "select the category",
-        options = ['Accuracy', 'Relevance', 'Coherence', 'Bias', 'Completeness'],
-        required = False
-        )
-    }
+# Drawing canvas for digit input
+canvas_result = st_canvas(
+    stroke_width=18,
+    stroke_color='#FFFFFF',
+    background_color='#000000',
+    width=200,
+    height=200,
+    drawing_mode='freedraw',
+    key='canvas'
 )
 
-st.write("You will notice that we changed our dataframe and added new data. "
-         "Now it is time to visualize what we have annotated!")
-
-st.divider()
-
-st.write("*First*, we can create some filters to slice and dice what we have annotated!")
-
-col1, col2 = st.columns([1,1])
-with col1:
-    issue_filter = st.selectbox("Issues or Non-issues", options = new_df.Issue.unique())
-with col2:
-    category_filter = st.selectbox("Choose a category", options  = new_df[new_df["Issue"]==issue_filter].Category.unique())
-
-st.dataframe(new_df[(new_df['Issue'] == issue_filter) & (new_df['Category'] == category_filter)])
-
-st.markdown("")
-st.write("*Next*, we can visualize our data quickly using `st.metrics` and `st.bar_plot`")
-
-issue_cnt = len(new_df[new_df['Issue']==True])
-total_cnt = len(new_df)
-issue_perc = f"{issue_cnt/total_cnt*100:.0f}%"
-
-col1, col2 = st.columns([1,1])
-with col1:
-    st.metric("Number of responses",issue_cnt)
-with col2:
-    st.metric("Annotation Progress", issue_perc)
-
-df_plot = new_df[new_df['Category']!=''].Category.value_counts().reset_index()
-
-st.bar_chart(df_plot, x = 'Category', y = 'count')
-
-st.write("Here we are at the end of getting started with streamlit! Happy Streamlit-ing! :balloon:")
+if canvas_result.image_data is not None:
+    image = Image.fromarray((canvas_result.image_data[:, :, :3] * 255).astype('uint8'))
+    if st.button('Predict Digit'):
+        digit, processed_image = predict_digit(model, image)
+        st.write(f'Predicted Digit: {digit}')
+        st.image(processed_image.reshape(28, 28), caption='Processed Image', width=100)
 
